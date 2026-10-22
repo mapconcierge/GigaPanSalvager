@@ -1,11 +1,14 @@
 import argparse
+import os
+import re
 import hashlib
 import json
 import sys
 import tarfile
 from pathlib import Path
+from . import __version__
 from .archive import Salvager, write, write_json, now
-from .model import parse_id
+from .model import parse_id, pages_url
 
 
 def main(argv=None):
@@ -19,18 +22,24 @@ def main(argv=None):
     p.add_argument('--max-bytes',type=int,default=8*1024**3)
     p.add_argument('--offline',action='store_true',help='Verify and package already-saved files without network access')
     p.add_argument('--probe',action='store_true',help='Metadata and one tile only; not a full archive')
+    p.add_argument('--github-owner',default=os.environ.get('GITHUB_REPOSITORY_OWNER') or 'mapconcierge',
+                   help='GitHub user/organisation that will publish gigapan_ID on Pages (default: %(default)s)')
+    p.add_argument('--pages-url',help='Published site root instead of https://OWNER.github.io/gigapan_ID/')
+    p.add_argument('--version',action='version',version=f'%(prog)s {__version__}')
     args=p.parse_args(argv)
     if bool(args.width)!=bool(args.height):p.error('--width and --height must be supplied together')
-    job=Salvager(args.id,args.output,workers=args.workers,offline=args.offline,max_tiles=args.max_tiles,max_bytes=args.max_bytes)
+    if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})',args.github_owner):p.error('invalid --github-owner')
+    try:base=pages_url(args.pages_url or f'https://{args.github_owner.lower()}.github.io/gigapan_{args.id}/')
+    except ValueError as exc:p.error(str(exc))
+    job=Salvager(args.id,args.output,workers=args.workers,offline=args.offline,max_tiles=args.max_tiles,max_bytes=args.max_bytes,pages_base=base)
     try:
         job.bootstrap(args.kml,args.width,args.height)
         job.extras()
         report=job.download(args.probe)
-        archive=job.finalize()
-        code=0 if report['status']=='complete' or (args.probe and report['verified_tiles']==1) else 2
+        archive=job.finalize();code=job.result['exit_code']
     except Exception as exc:
         report={'id':args.id,'status':'unavailable','finished_at':now(),'error':str(exc),'warnings':job.warnings,'errors':job.errors}
-        write_json(job.root/'audit.json',report)
+        write_json(job.site/'audit.json',report)
         archive=job.root.with_suffix('.tar.gz')
         with tarfile.open(archive,'w:gz',dereference=False) as tar:tar.add(job.root,arcname=job.root.name)
         digest=hashlib.sha256()

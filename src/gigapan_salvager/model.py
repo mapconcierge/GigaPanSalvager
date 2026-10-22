@@ -93,10 +93,21 @@ def tile_path(z, x, y):
     return '/'.join(parts + ['r'+q+'.jpg'])
 
 
-def offline_kml(raw, metadata):
-    """Keep CDATA, Japanese text and namespaces byte-for-byte when a source exists."""
+def pages_url(value):
+    """Validate a GitHub Pages base URL and normalise it to end with a slash."""
+    u = urlparse(str(value).strip())
+    if u.scheme != 'https' or not u.hostname or u.username or u.password or u.query or u.fragment:
+        raise ValueError('公開 URL は https://OWNER.github.io/REPOSITORY/ の形式で指定してください。')
+    return u.geturl().rstrip('/') + '/'
+
+
+def offline_kml(raw, metadata, base=''):
+    """Keep CDATA, Japanese text and namespaces byte-for-byte when a source exists.
+
+    `base` is the published site root (absolute URL); empty keeps paths relative.
+    """
     gid = metadata['id']
-    local = b'ge_tiles/$[level]/$[y]/$[x].jpg'
+    local = (base + 'ge_tiles/$[level]/$[y]/$[x].jpg').encode('utf-8')
     if raw:
         tree = safe_xml(raw)
         href = tree.find('.//k:PhotoOverlay/k:Icon/k:href', NS)
@@ -104,7 +115,7 @@ def offline_kml(raw, metadata):
             old = html.escape(href.text.strip(), quote=False).encode('utf-8')
             token = b'>' + old + b'</'
             if raw.count(token) == 1:
-                result = raw.replace(token, b'>' + local + b'</')
+                result = raw.replace(token, b'>' + html.escape(local.decode(), quote=False).encode('utf-8') + b'</')
                 check = safe_xml(result).find('.//k:PhotoOverlay/k:Icon/k:href', NS)
                 if check is not None and check.text == local.decode():
                     return result
@@ -120,7 +131,7 @@ def offline_kml(raw, metadata):
 <PhotoOverlay id="gigapan_{gid}"><name>{esc(metadata.get('name', gid))}</name>
 <description>{esc(metadata.get('description', ''))}</description>
 <Camera><longitude>{esc(metadata['longitude'])}</longitude><latitude>{esc(metadata['latitude'])}</latitude><altitude>{esc(metadata.get('altitude',0))}</altitude><heading>{esc(metadata.get('heading',0))}</heading><tilt>90</tilt></Camera>
-<Icon><href>{local.decode()}</href></Icon>
+<Icon><href>{esc(local.decode())}</href></Icon>
 <ViewVolume><leftFov>{-fov_w/2}</leftFov><rightFov>{fov_w/2}</rightFov><bottomFov>{bottom}</bottomFov><topFov>{top}</topFov><near>{esc(metadata.get('distance',15))}</near></ViewVolume>
 <ImagePyramid><tileSize>256</tileSize><maxWidth>{metadata['width']}</maxWidth><maxHeight>{metadata['height']}</maxHeight><gridOrigin>upperLeft</gridOrigin></ImagePyramid>
 <Point><coordinates>{metadata['longitude']},{metadata['latitude']}</coordinates></Point><shape>sphere</shape>

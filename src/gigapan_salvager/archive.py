@@ -18,8 +18,13 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, parse_qs
 from PIL import Image
-from .model import Geometry, kml_metadata, offline_kml, safe_xml, NS
+from . import __version__
+from .model import Geometry, kml_metadata, offline_kml, pages_url, safe_xml, NS
+from .readme import repository_readme
 from .network import Client, ORIGINS, allowed_url
+
+
+LEGACY_SITE_FILES=('tiles','ge_tiles','metadata','thumbnails','tile_manifest.csv','missing_tiles.json','audit.json','plan.json','preview.jpg','viewer.html')
 
 
 def now():
@@ -68,14 +73,25 @@ class Links(HTMLParser):
 
 
 class Salvager:
-    def __init__(self,gid,output,client=None,workers=6,offline=False,max_tiles=250000,max_bytes=8*1024**3):
-        self.gid=gid;self.root=Path(output)/f'gigapan_{gid}'
-        self.meta=self.root/'metadata';self.meta.mkdir(parents=True,exist_ok=True)
+    def __init__(self,gid,output,client=None,workers=6,offline=False,max_tiles=250000,max_bytes=8*1024**3,pages_base=None):
+        # root is a ready-to-push repository; docs/ is the GitHub Pages site.
+        self.gid=gid;self.root=Path(output)/f'gigapan_{gid}';self.site=self.root/'docs'
+        self.pages_base=pages_url(pages_base or f'https://mapconcierge.github.io/gigapan_{gid}/')
+        self.migrate_layout()
+        self.meta=self.site/'metadata';self.meta.mkdir(parents=True,exist_ok=True)
         self.client=client or Client();self.workers=workers;self.offline=offline
         self.max_tiles=max_tiles;self.max_bytes=max_bytes
         self.warnings=[];self.sources=[];self.errors=[];self.stop=threading.Event();self.lock=threading.Lock()
         self.downloaded_bytes=0;self.consecutive_failures=0;self.last_error=''
         self.page_config={}
+
+    def migrate_layout(self):
+        """Move archives saved by v0.1 (files directly under root) into docs/ so retries keep verified tiles."""
+        for name in LEGACY_SITE_FILES:
+            old=self.root/name;new=self.site/name
+            if old.exists() and not new.exists():
+                new.parent.mkdir(parents=True,exist_ok=True);os.replace(old,new)
+        (self.root/f'gigapan_{self.gid}_offline.kml').unlink(missing_ok=True)
 
     def resource(self,name,path,validator=None):
         dest=self.meta/name
@@ -92,7 +108,7 @@ class Salvager:
             try:
                 raw,info=self.client.get(origin+path,attempts=1)
                 if validator:validator(raw)
-                write(dest,raw);self.sources.append({'file':str(dest.relative_to(self.root)),'retrieved_at':now(),**info})
+                write(dest,raw);self.sources.append({'file':str(dest.relative_to(self.site)),'retrieved_at':now(),**info})
                 return raw
             except Exception as exc:errors.append(str(exc)[:250])
         self.errors.append({'resource':name,'attempt_errors':errors})
@@ -125,13 +141,13 @@ class Salvager:
         if m.get('tiles_total') is not None and int(m['tiles_total'])!=self.geometry.count:
             self.warnings.append(f"公開 tiles_total={m['tiles_total']} と計算値 {self.geometry.count} が異なります。")
         plan={'id':self.gid,**asdict(self.geometry)}
-        previous=self.root/'plan.json'
+        previous=self.site/'plan.json'
         if previous.exists() and json.loads(previous.read_text())!=plan:
             raise ValueError('保存済みの画像寸法と異なります。新しい保存先を指定してください。')
         write_json(previous,plan);write_json(self.meta/'normalized.json',m)
         self.metadata=m;self.raw_kml=raw_kml
         self.prior={}
-        manifest=self.root/'tile_manifest.csv'
+        manifest=self.site/'tile_manifest.csv'
         if manifest.exists():
             with manifest.open() as f:self.prior={r['relative_path']:r for r in csv.DictReader(f)}
         return m
@@ -180,11 +196,11 @@ class Salvager:
             if not allowed_url(url):continue
             # Store only this panorama's images, including its snapshot thumbnails.
             if not re.search(rf'/(?:gigapans|snapshots)\d+/{self.gid}/images/[A-Za-z0-9_-]+\.jpg$',urlparse(url).path):continue
-            filename=Path(urlparse(url).path).name;dest=self.root/'thumbnails'/filename
+            filename=Path(urlparse(url).path).name;dest=self.site/'thumbnails'/filename
             if dest.exists() or self.offline:continue
             try:
                 data,info=self.client.get(url,attempts=2);inspect_jpeg(data)
-                write(dest,data);self.sources.append({'file':str(dest.relative_to(self.root)),**info,'retrieved_at':now()})
+                write(dest,data);self.sources.append({'file':str(dest.relative_to(self.site)),**info,'retrieved_at':now()})
             except Exception as exc:self.errors.append({'resource':url,'error':str(exc)[:250]})
         self.snapshots=snapshots
 
@@ -218,14 +234,14 @@ class Salvager:
         for base in self.tile_bases():
             try:
                 raw,info=self.client.get(base+'r.jpg',attempts=1);inspect_jpeg(raw,self.geometry.tile_size)
-                write(self.root/'tiles/r.jpg',raw)
+                write(self.site/'tiles/r.jpg',raw)
                 return base
             except Exception as exc:self.errors.append({'resource':base+'r.jpg','error':str(exc)[:250]})
         self.warnings.append('タイル配信元へ接続できません。保存済み画像を検証し、未取得分を記録します。')
         return None
 
     def one_tile(self,task,base):
-        z,x,y,name=task;rel='tiles/'+name;dest=self.root/rel
+        z,x,y,name=task;rel='tiles/'+name;dest=self.site/rel
         row={'level':z,'x':x,'y':y,'relative_path':rel,'source_url':(base or self.tile_bases()[0])+name,'status':'missing','bytes':0,'width':0,'height':0,'sha256':''}
         try:
             if dest.exists():
@@ -275,55 +291,49 @@ class Salvager:
         return self.report
 
     def finalize(self):
+        site=self.site
         fields=['level','x','y','relative_path','source_url','status','bytes','width','height','sha256']
-        with (self.root/'tile_manifest.csv').open('w',newline='',encoding='utf-8') as f:
+        with (site/'tile_manifest.csv').open('w',newline='',encoding='utf-8') as f:
             writer=csv.DictWriter(f,fieldnames=fields,extrasaction='ignore');writer.writeheader();writer.writerows(self.rows)
-        write_json(self.root/'missing_tiles.json',[r for r in self.rows if r['status']=='missing'])
+        write_json(site/'missing_tiles.json',[r for r in self.rows if r['status']=='missing'])
         for r in self.rows:
-            dest=self.root/f'ge_tiles/{r["level"]}/{r["y"]}/{r["x"]}.jpg'
+            dest=site/f'ge_tiles/{r["level"]}/{r["y"]}/{r["x"]}.jpg'
             if r['status']=='missing':
                 dest.unlink(missing_ok=True)
                 continue
-            source=self.root/r['relative_path'];dest.parent.mkdir(parents=True,exist_ok=True)
+            source=site/r['relative_path'];dest.parent.mkdir(parents=True,exist_ok=True)
             if dest.exists() and os.path.samefile(source,dest):continue
             temp=dest.with_suffix('.part')
             if temp.exists():temp.unlink()
             try:os.link(source,temp)
             except OSError:shutil.copyfile(source,temp)
             os.replace(temp,dest)
-        try:
-            kml=offline_kml(self.raw_kml,self.metadata)
-            if kml:write(self.root/f'gigapan_{self.gid}_offline.kml',kml)
-            else:self.warnings.append('位置または画角情報が不足しているため KML は生成していません。')
-        except ValueError as exc:self.warnings.append(str(exc))
+        # Published KML points at the GitHub Pages copy; the _local variant works from an unpacked folder.
+        for name,base in ((f'gigapan_{self.gid}.kml',self.pages_base),(f'gigapan_{self.gid}_local.kml','')):
+            try:
+                kml=offline_kml(self.raw_kml,self.metadata,base)
+                if kml:write(site/name,self.thumbnail_links(kml,base) if base else kml)
+                else:self.warnings.append('位置または画角情報が不足しているため KML は生成していません。');break
+            except ValueError as exc:self.warnings.append(str(exc));break
         self.preview()
+        if self.report['tile_bytes']*2>1024**3:
+            self.warnings.append('tiles/ と ge_tiles/ の合計が GitHub Pages の公開サイト上限 1 GB を超える見込みです。公開前に容量を確認してください。')
         self.report['warnings']=list(dict.fromkeys(self.warnings))
-        write_json(self.root/'audit.json',self.report)
+        self.report['salvager_version']=__version__;self.report['pages_url']=self.pages_base
+        write_json(site/'audit.json',self.report)
         log=self.meta/'retrieval_log.json'
         history=json.loads(log.read_text()).get('history',[]) if log.exists() else []
         history.append({'time':now(),'sources':self.sources,'errors':self.errors})
         write_json(log,{'history':history})
         template=Path(__file__).with_name('viewer.html').read_text()
         data=json.dumps({'id':self.gid,'name':self.metadata.get('name'),'width':self.geometry.width,'height':self.geometry.height,'levels':self.geometry.levels,'status':self.report['status']},ensure_ascii=False).replace('<','\\u003c')
-        write(self.root/'viewer.html',template.replace('__PANORAMA_JSON__',data))
-        write(self.root/'README.md',f'''# GigaPan {self.gid} 保存版
-
-{self.metadata.get('name','')}
-
-取得元: https://gigapan.com/gigapans/{self.gid}
-
-状態: **{self.report['status']}** — 検証済み {self.report['verified_tiles']:,} / {self.geometry.count:,} 枚。
-
-`viewer.html` をブラウザで開いて閲覧します。KML と `ge_tiles/` は同じフォルダに置いてください。
-`tiles/` は配信元のファイル構造、`ge_tiles/` は KML 用の同じ JPEG のハードリンクです。
-`tile_manifest.csv` に全座標・SHA-256、`missing_tiles.json` に取得できなかったタイルを記録しています。
-JPEG は全画素のデコードとチェックサムを検証しています。元写真やステッチ前の素材は含みません。
-`metadata/` は公開 API・ページ・KML・スナップショット・コメントの取得できた原本です。
-元資料の著作者・ライセンス表記に従って利用してください。
-
-## 取得上の注意
-
-'''+('\n'.join('- '+w for w in self.report['warnings']) or '特記事項なし。')+'\n')
+        viewer=template.replace('__PANORAMA_JSON__',data)
+        write(site/'index.html',viewer);write(site/'viewer.html',viewer)
+        write(site/'.nojekyll','')  # Serve thousands of tiles as-is; skip the Jekyll build.
+        code=0 if self.report['status']=='complete' or (self.report['status']=='probe' and self.report['verified_tiles']==1) else 2
+        self.result={'archive':f'gigapan_{self.gid}.tar.gz','exit_code':code,**self.report}
+        write_json(self.root/'job-result.json',self.result)
+        write(self.root/'README.md',repository_readme(self))
         archive=self.root.with_suffix('.tar.gz')
         temp=archive.with_suffix('.tmp')
         with tarfile.open(temp,'w:gz',compresslevel=3,dereference=False) as tar:tar.add(self.root,arcname=self.root.name)
@@ -333,6 +343,15 @@ JPEG は全画素のデコードとチェックサムを検証しています。
             for chunk in iter(lambda:f.read(1024*1024),b''):digest.update(chunk)
         write(archive.with_name(archive.name+'.sha256'),digest.hexdigest()+'  '+archive.name+'\n')
         return archive
+
+    def thumbnail_links(self,kml,base):
+        """Point KML references to thumbnails we saved at their published absolute URL."""
+        thumbs=self.site/'thumbnails'
+        for path in sorted(thumbs.glob('*.jpg')) if thumbs.exists() else []:
+            for scheme in (b'https:',b'http:',b''):
+                old=scheme+f'//static.gigapan.com/gigapans0/{self.gid}/images/{path.name}'.encode()
+                kml=kml.replace(old,f'{base}thumbnails/{path.name}'.encode())
+        return kml
 
     def preview(self):
         good={(r['level'],r['x'],r['y']):r for r in self.rows if r['status']!='missing'}
@@ -344,5 +363,5 @@ JPEG は全画素のデコードとチェックサムを検証しています。
             canvas=Image.new('RGB',(w,h))
             for y in range(ny):
                 for x in range(nx):
-                    with Image.open(self.root/good[z,x,y]['relative_path']) as tile:canvas.paste(tile,(x*256,y*256))
-            canvas.save(self.root/'preview.jpg',quality=90);break
+                    with Image.open(self.site/good[z,x,y]['relative_path']) as tile:canvas.paste(tile,(x*256,y*256))
+            canvas.save(self.site/'preview.jpg',quality=90);break

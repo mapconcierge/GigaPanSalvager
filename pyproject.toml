@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gigapan-salvager"
-version = "0.1.0"
+version = "0.9.0"
 description = "Resumable preservation of public GigaPan tile pyramids and metadata"
 requires-python = ">=3.10"
 dependencies = ["requests>=2.32,<3", "Pillow>=11,<13"]

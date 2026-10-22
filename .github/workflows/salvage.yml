@@ -68,8 +68,8 @@ jobs:
             archives/*.tar.gz
             archives/*.sha256
             archives/job-result.json
-            archives/gigapan_${{ steps.request.outputs.id }}/audit.json
-            archives/gigapan_${{ steps.request.outputs.id }}/missing_tiles.json
+            archives/gigapan_${{ steps.request.outputs.id }}/docs/audit.json
+            archives/gigapan_${{ steps.request.outputs.id }}/docs/missing_tiles.json
           retention-days: 30
           compression-level: 0
           if-no-files-found: warn
