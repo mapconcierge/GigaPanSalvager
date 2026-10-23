@@ -9,9 +9,11 @@ from PIL import Image
 import re
 from gigapan_salvager import __version__
 from gigapan_salvager.archive import Salvager, inspect_jpeg
-from gigapan_salvager.model import Geometry, tile_path, parse_id, kml_metadata, offline_kml, pages_url, safe_xml
+from gigapan_salvager.model import Geometry, tile_path, parse_id, parse_id_list, kml_metadata, offline_kml, pages_url, safe_xml
+from gigapan_salvager import cli
 from gigapan_salvager.network import allowed_url
-from scripts.prepare_request import parse_request
+from scripts.prepare_request import parse_request, pick
+from scripts.summarize_batch import summary
 
 KML='''<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><PhotoOverlay id="gigapan_42"><name>日本語 &amp; 海</name><description><![CDATA[<p>原本の説明</p>]]></description><Icon><href>http://gigapan.com/get_ge_tile/42/$[level]/$[y]/$[x]</href></Icon><ImagePyramid><tileSize>256</tileSize><maxWidth>513</maxWidth><maxHeight>257</maxHeight></ImagePyramid></PhotoOverlay></Document></kml>'''.encode()
 
@@ -64,6 +66,27 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(safe_xml(generated).find('.//k:Icon/k:href',{'k':'http://www.opengis.net/kml/2.2'}).text,base+'ge_tiles/$[level]/$[y]/$[x].jpg')
         for bad in ('http://x.github.io/a/','https://user@x.github.io/','https://x.github.io/?q=1'):
             with self.assertRaises(ValueError):pages_url(bad)
+    def test_id_list_csv(self):
+        self.assertEqual(parse_id_list('\ufeffgigapan_id\r\n76564\n\n# memo\n"https://gigapan.com/gigapans/76649",大槌\n76564\n'),[76564,76649])
+        with self.assertRaisesRegex(ValueError,'2 行目'):parse_id_list('76564\n42; rm -rf x\n')
+        with self.assertRaises(ValueError):parse_id_list('id\n')
+        with self.assertRaises(ValueError):parse_id_list('\n'.join(str(i) for i in range(1,258)))
+    def test_batch_request(self):
+        body='<!-- gigapan-salvager:v1 -->\n```json\n{"ids":[42,43],"mode":"probe"}\n```'
+        event={'issue':{'title':'[Salvage] GigaPan 一括 2 件','body':body,'user':{'login':'owner'}}}
+        req=parse_request(event,'issues','owner/repo')
+        self.assertEqual(req,{'ids':[42,43],'mode':'probe'})
+        self.assertEqual(pick(req,'43'),{'id':43,'mode':'probe'})
+        with self.assertRaises(ValueError):pick(req,'44')
+        for bad in ('{"ids":[42,42]}','{"ids":[]}','{"ids":[42],"width":10,"height":10}','{"ids":[42],"id":42}','{"ids":["42; x"]}'):
+            event['issue']['body']=body.replace('{"ids":[42,43],"mode":"probe"}',bad)
+            with self.assertRaises(ValueError):parse_request(event,'issues','owner/repo')
+        self.assertEqual(parse_request({'inputs':{'gigapan_id':'42, 43\n44','mode':'full'}},'workflow_dispatch','o/r')['ids'],[42,43,44])
+        single=parse_request({'inputs':{'gigapan_id':'42','width':'513','height':'257'}},'workflow_dispatch','o/r')
+        self.assertEqual(pick(single,42),{'id':42,'mode':'full','width':513,'height':257})
+        text=summary([42,43,44],{42:{'id':42,'name':'a|b','status':'complete','verified_tiles':9,'expected_tiles':9},43:{'id':43,'status':'unavailable'}},'https://x')
+        self.assertIn('| [42](https://gigapan.com/gigapans/42) | a\\|b | ✅ 完了 | 9 / 9 |',text)
+        self.assertIn('未実行・中断',text)
     def test_versions_match(self):
         root=Path(__file__).parents[1]
         self.assertEqual(__version__,'0.9.0')
@@ -124,6 +147,20 @@ class PipelineTests(unittest.TestCase):
         j=self.run_job();self.assertEqual(j.report['status'],'complete')
         tile_calls=[x for x in self.client.calls if '/tiles/' in x]
         self.assertEqual(len(tile_calls),4)
+    def test_cli_id_list_runs_each_in_turn(self):
+        order=[]
+        def fake(args,gid,base):
+            order.append((gid,base));(Path(args.output)/'job-result.json').write_text(json.dumps({'id':gid,'status':'complete' if gid==42 else 'partial','exit_code':0 if gid==42 else 2}))
+            return 0
+        ids=Path(self.tmp.name)/'ids.csv';ids.write_text('id\n42\n43\n')
+        original=cli.salvage;cli.salvage=fake
+        try:code=cli.main(['--id-list',str(ids),'--output',self.tmp.name,'--github-owner','Someone'])
+        finally:cli.salvage=original
+        self.assertEqual(order,[(42,'https://someone.github.io/gigapan_42/'),(43,'https://someone.github.io/gigapan_43/')])
+        self.assertEqual(code,2)
+        batch=json.loads((Path(self.tmp.name)/'batch-result.json').read_text())
+        self.assertEqual((batch['finished'],batch['total']),(2,2));self.assertEqual([r['status'] for r in batch['results']],['complete','partial'])
+        with self.assertRaises(SystemExit):cli.main(['42','--id-list',str(ids)])
     def test_probe_never_claims_complete(self):
         j=Salvager(42,self.tmp.name,client=self.client);j.bootstrap();j.download(probe=True)
         self.assertEqual(j.report['status'],'probe');self.assertEqual(j.report['verified_tiles'],1)

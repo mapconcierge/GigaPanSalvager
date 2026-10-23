@@ -18,6 +18,22 @@ GitHub Pages が画面を配信し、GitHub Actions が画像を取得します�
 
 Actions の **Salvage GigaPan → Run workflow** から直接実行することもできます。
 
+### ID リスト CSV で自動サルベージ
+
+「取得オプション」→「対象のIDリストCSVで自動サルベージ」で、1行に1つの ID（または URL）を書いた CSV を読み込むと、全件を1つの依頼にまとめます。
+
+```csv
+gigapan_id
+76564
+https://gigapan.com/gigapans/76649
+```
+
+- 最大 **256 件**（GitHub Actions の matrix の上限）。見出し行・空行・`#` で始まる行は無視し、2列目以降と重複 ID も無視します。
+- Actions は ID ごとに独立したジョブを **1件ずつ順番に** 実行します（`max-parallel: 1`）。1件が終わると次のパノラマに進み、未完了・取得不能の ID があっても残りは続行します。
+- 各ジョブに 120 分の制限・Artifact `gigapan-ID-…`・途中経過のキャッシュがあります。Issue には1件ごとの結果と、最後に全件の一覧表を投稿します。
+- KML・寸法による補助は1件ずつの依頼でのみ使えます。未完了の ID は、その ID だけで再依頼してください。
+- **Run workflow** では `gigapan_id` 欄にカンマ・空白区切りで複数の ID を入力できます。
+
 - `full`: 全階層の画像と取得可能な公開資料を保存。
 - `probe`: 公開資料と最小解像度のタイル1枚だけで通信確認。全画像の保存ではありません。
 - `width` / `height`: API 停止時の補助寸法。通常は空欄で構いません。ウェブ画面では KML から寸法を読み取れます。**ウェブでは KML 本文は送信しません**。元 KML を確実に引き継ぐにはローカル版の `--kml` を使用してください。
@@ -86,6 +102,9 @@ gigapan-salvage 76564 --output archives --offline
 # 通信確認
 gigapan-salvage 76564 --probe
 
+# ID リスト CSV（1行1ID）を順番に救出。結果一覧は archives/batch-result.json
+gigapan-salvage --id-list ids.csv
+
 # KML の公開 URL を指定（既定は https://mapconcierge.github.io/gigapan_ID/）
 gigapan-salvage 76564 --github-owner YOUR_NAME
 gigapan-salvage 76564 --pages-url https://example.org/gigapan_76564/
@@ -93,7 +112,7 @@ gigapan-salvage 76564 --pages-url https://example.org/gigapan_76564/
 
 KML の画像参照は `https://OWNER.github.io/gigapan_ID/` を基点にした絶対 URL です。`OWNER` は `--github-owner`、未指定なら Actions 実行時はそのリポジトリの所有者、ローカルでは `mapconcierge` です。
 
-終了コードは `0` が全タイル検証完了（または通信確認1枚成功）、`2` が一部未取得、`1` が寸法取得不能などです。`--probe` の状態は常に `probe` で、全画像保存完了とは区別されます。レポートとアーカイブは可能な範囲で失敗時にも残します。
+終了コードは `0` が全タイル検証完了（または通信確認1枚成功）、`2` が一部未取得、`1` が寸法取得不能などです。`--id-list` では全件のうち最も大きい値を返します。`--probe` の状態は常に `probe` で、全画像保存完了とは区別されます。レポートとアーカイブは可能な範囲で失敗時にも残します。
 
 ### 再実行・制限
 

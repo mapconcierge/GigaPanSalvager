@@ -1,8 +1,9 @@
-import {parseId,issueUrl,statusLabel} from './core.mjs';
+import {parseId,parseIdList,issueUrl,statusLabel} from './core.mjs';
 const $=s=>document.querySelector(s);
-let config={repository:'mapconcierge/GigaPanSalvager'},kml=null;
+let config={repository:'mapconcierge/GigaPanSalvager'},kml=null,batch=null;
 function error(message){$('#error').textContent=message;$('#error').hidden=!message;}
 function request(){
+  if(batch){if(kml)throw new Error('KML による寸法の補助は1件ずつの依頼でのみ使えます。');return {ids:batch.ids,mode:$('#mode').value};}
   const id=parseId($('#pano-id').value),result={id,mode:$('#mode').value};
   if(kml){if(kml.id&&kml.id!==id)throw new Error('KML の ID と入力した ID が異なります。');result.width=kml.width;result.height=kml.height;}
   return result;
@@ -23,13 +24,25 @@ $('#kml-file').addEventListener('change',async e=>{
     kml={width,height,id:id?Number(id):null};$('#kml-info').textContent=`読み取り済み：${width.toLocaleString()} × ${height.toLocaleString()} px`;
   }catch(ex){e.target.value='';error(ex.message);}
 });
+function setBatch(next){
+  batch=next;const input=$('#pano-id');input.disabled=input.required=false;
+  if(batch){input.disabled=true;$('#csv-info').textContent=`読み取り済み：${batch.ids.length} 件（${batch.ids.slice(0,5).join(', ')}${batch.ids.length>5?' ほか':''}）`;$('#submit-label').textContent=`GitHub で一括救出依頼を作成（${batch.ids.length} 件）`;}
+  else{input.required=true;$('#csv-info').textContent='';$('#id-csv').value='';$('#submit-label').textContent='GitHub で救出依頼を作成';}
+  $('#csv-clear').hidden=!batch;
+}
+$('#id-csv').addEventListener('change',async e=>{
+  error('');const f=e.target.files[0];setBatch(null);if(!f)return;
+  try{if(f.size>1_000_000)throw new Error('ID リストは 1 MB までです。');setBatch({ids:parseIdList(await f.text()),name:f.name});}
+  catch(ex){error(ex.message);}
+});
+$('#csv-clear').addEventListener('click',()=>{setBatch(null);error('');});
 $('#request-form').addEventListener('submit',e=>{
   e.preventDefault();error('');
   try{const req=request();const u=issueUrl(config.repository,req);location.assign(u);}
   catch(ex){error(ex.message);}
 });
 $('#copy-command').addEventListener('click',async()=>{
-  try{const req=request();let cmd=`gigapan-salvage ${req.id}`;if(req.mode==='probe')cmd+=' --probe';if(req.width)cmd+=` --width ${req.width} --height ${req.height}`;await navigator.clipboard.writeText(cmd);$('#copy-status').textContent='コピーしました：'+cmd;error('');}
+  try{const req=request();let cmd=req.ids?`gigapan-salvage --id-list ${JSON.stringify(batch.name)}`:`gigapan-salvage ${req.id}`;if(req.mode==='probe')cmd+=' --probe';if(req.width)cmd+=` --width ${req.width} --height ${req.height}`;await navigator.clipboard.writeText(cmd);$('#copy-status').textContent='コピーしました：'+cmd;error('');}
   catch(ex){error(ex.message);}
 });
 async function loadRuns(){

@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="GigaPan の公開タイルとメタデータを、検証できるアーカイブとして手元に残す。">
 <title>GigaPan Salvager — パノラマを、未来へ。</title>
-<link rel="stylesheet" href="style.css"><script type="module" src="app.mjs?v=0.9.0"></script>
+<link rel="stylesheet" href="style.css"><script type="module" src="app.mjs?v=20261023"></script>
 </head>
 <body>
 <header class="topbar"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true">▦</span><span>GigaPan <strong>Salvager</strong></span><span class="version" title="GigaPan Salvager のバージョン">v0.9.0</span></a><nav><a href="#how">使い方</a><a id="repo-link" href="https://github.com/mapconcierge/GigaPanSalvager">GitHub ↗</a></nav></header>
@@ -15,10 +15,10 @@
 <form id="request-form">
 <label for="pano-id">GigaPan ID または URL</label><input id="pano-id" name="id" placeholder="例：76564" value="76564" autocomplete="off" required aria-describedby="input-help error">
 <p id="input-help" class="hint">gigapan.com/gigapans/76564 の URL も使えます。</p>
-<details class="options"><summary>取得オプション</summary><label for="mode">保存範囲</label><select id="mode"><option value="full">全階層のタイル＋メタデータ</option><option value="probe">通信確認（メタデータ＋タイル1枚）</option></select><label for="kml-file">KML で寸法を補う（任意）</label><input id="kml-file" type="file" accept=".kml,application/vnd.google-earth.kml+xml"><p class="hint">API が不安定な場合に使います。読み取った画像寸法を依頼に含めます。</p><p id="kml-info" class="hint"></p></details>
+<details class="options"><summary>取得オプション</summary><label for="mode">保存範囲</label><select id="mode"><option value="full">全階層のタイル＋メタデータ</option><option value="probe">通信確認（メタデータ＋タイル1枚）</option></select><label for="kml-file">KML で寸法を補う（任意）</label><input id="kml-file" type="file" accept=".kml,application/vnd.google-earth.kml+xml"><p class="hint">API が不安定な場合に使います。読み取った画像寸法を依頼に含めます。</p><p id="kml-info" class="hint"></p><label for="id-csv">対象のIDリストCSVで自動サルベージ</label><input id="id-csv" type="file" accept=".csv,.txt,text/csv,text/plain" aria-describedby="csv-help csv-info"><p id="csv-help" class="hint">1行に1つの ID または URL を書いた CSV。読み込むと上の ID 欄の代わりにリストの全件を、1件の救出が終わるたびに次へ進む形で順番に実行します（最大256件。見出し行・空行・# で始まる行は無視）。</p><p id="csv-info" class="hint" role="status"></p><button id="csv-clear" class="secondary" type="button" hidden>リストを解除</button></details>
 <div class="included"><span>保存内容</span><p>全解像度の画像タイル<br>公開メタデータ・スナップショット<br>ビューア・KML・検証一覧・README<br>（GitHub Pages の /docs 構成）</p></div>
 <p id="error" role="alert" class="error" hidden></p>
-<button class="primary" type="submit">GitHub で救出依頼を作成 <span>↗</span></button>
+<button class="primary" type="submit"><span id="submit-label">GitHub で救出依頼を作成</span> <span>↗</span></button>
 <p class="consent">GitHub で内容を確認し、<b>Create new issue</b> を押すと開始します。依頼は公開されます。実行には所有者・共同編集者の権限が必要です。</p>
 </form>
 <div class="alternative"><a id="manual-link" href="https://github.com/mapconcierge/GigaPanSalvager/actions/workflows/salvage.yml">Actions から直接実行</a><button id="copy-command" type="button">ローカル実行コマンドをコピー</button></div><p id="copy-status" class="hint" role="status"></p>

@@ -21,6 +21,31 @@ def parse_id(value):
     raise ValueError('GigaPan の数値 ID または https://gigapan.com/gigapans/ID を指定してください。')
 
 
+MAX_BATCH = 256  # GitHub Actions matrix limit: one job per panorama.
+
+
+def parse_id_list(text, limit=MAX_BATCH):
+    """Read a one-ID-per-line CSV: first column only, blank/# lines and a header row skipped, duplicates dropped."""
+    ids = []
+    for number, line in enumerate(str(text).lstrip('\ufeff').splitlines(), 1):
+        cell = line.split(',')[0].strip().strip('"\'').strip()
+        if not cell or cell.startswith('#'):
+            continue
+        try:
+            gid = parse_id(cell)
+        except ValueError:
+            if not ids and not re.search(r'[0-9]', cell):
+                continue  # header such as "id" or "gigapan_id"
+            raise ValueError(f'{number} 行目「{cell[:40]}」は GigaPan ID または URL ではありません。') from None
+        if gid not in ids:
+            ids.append(gid)
+    if not ids:
+        raise ValueError('ID リストに GigaPan ID がありません。')
+    if len(ids) > limit:
+        raise ValueError(f'ID リストは {limit} 件までです（{len(ids)} 件）。分割してください。')
+    return ids
+
+
 def safe_xml(raw):
     if len(raw) > 256_000 or re.search(br'<!\s*(DOCTYPE|ENTITY)', raw, re.I):
         raise ValueError('KML が大きすぎるか、対応していない XML 宣言を含んでいます。')
