@@ -89,7 +89,7 @@ class ModelTests(unittest.TestCase):
         self.assertIn('未実行・中断',text)
     def test_versions_match(self):
         root=Path(__file__).parents[1]
-        self.assertEqual(__version__,'0.9.0')
+        self.assertEqual(__version__,'0.9.1')
         self.assertIn(f'version = "{__version__}"',(root/'pyproject.toml').read_text())
         self.assertIn(f'>v{__version__}</span>',(root/'web/index.html').read_text())
     def test_truncated_jpeg(self):

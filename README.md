@@ -1,4 +1,4 @@
-# GigaPan Salvager <sub>v0.9.0</sub>
+# GigaPan Salvager <sub>v0.9.1</sub>
 
 GigaPan の公開パノラマを ID または URL で指定し、全解像度の画像タイルと公開資料を手元に保存するツールです。
 
